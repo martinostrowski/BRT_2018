@@ -28,7 +28,7 @@ zotu.names<-names(rev(sort(colSums(zotus1000[,21:3577]))))
 
 model.filenames<-vector('double', length(zotu.names))
 
-for (i in 1:length(model.names)){
+for (i in 1:length(zotu.names)){
 	model.filenames[i]<-paste(zotu.names[i], ".gaussian.RData", sep="")
 }
 
@@ -87,13 +87,13 @@ zotu.names<-vector('double', nmods)
 sp.names<-vector('double', nmods)
 
 
-cv<-vector('double', nmods)
-cvse<-vector('double', nmods)
-ntrees<-vector('double', nmods)
-dev<-vector('double', nmods)
-contributions<-matrix(nrow=9, ncol=nmods)
+cv2<-vector('double', nmods)
+cvse2<-vector('double', nmods)
+ntrees2<-vector('double', nmods)
+dev2<-vector('double', nmods)
+contributions2<-matrix(nrow=9, ncol=nmods)
 
-rownames(contributions)<-c("temp","sal","depth","strat","nox", "po4", "n.p", "DL", "sil")
+rownames(contributions2)<-c("temp","sal","depth","strat","nox", "po4", "n.p", "DL", "sil")
 
 
 for (l in 1002:1499){
@@ -102,14 +102,14 @@ for (l in 1002:1499){
 
 	zotu.names[l]<-my.mod[[28]][[5]][[1]]
 	
-	cv[l]<-my.mod$cv.statistics$correlation.mean
-  	cvse[l]<-my.mod$cv.statistics$correlation.se
-  	dev[l]<-my.mod$cv.statistics$deviance
-  	ntrees[i]<-my.mod$n.trees
-  	contributions[,i]<-my.mod[[32]][c("temp","sal","depth","strat","nox", "po4", "n.p", "DL", "sil"),2]
+	cv2[l]<-my.mod$cv.statistics$correlation.mean
+  	cvse2[l]<-my.mod$cv.statistics$correlation.se
+  	dev2[l]<-my.mod$cv.statistics$deviance.mean
+  	ntrees2[l]<-my.mod$n.trees
+  	contributions2[,l]<-my.mod[[32]][c("temp","sal","depth","strat","nox", "po4", "n.p", "DL", "sil"),2]
   
-  	tmp.result<-cbind(zotu.names, cv, cvse, dev, ntrees, t(contributions))
-  	write.table(tmp.result[(tmp.result[,"ntrees"]!=0),], file="evaluation.data.set.csv", sep=',', quote=F)
+  	tmp.result<-cbind(zotu.names, cv2, cvse2, dev2, ntrees2, t(contributions2))
+  	write.table(tmp.result[(tmp.result[,"ntrees2"]!=0),], file="evaluation.data.set.1002.1499.csv", sep=',', quote=F)
 	
 	
 
@@ -128,7 +128,7 @@ month<-c("m1","m2","m3","m4","m5","m6","m7","m8","m9","m10","m11","m12")
 
 for (n in 1:12){
 
-write.csv(preds.list[[n]], file=paste("cars.", month[n], "zotus.gaussian.201807.csv", sep=','), quote=F) 
+write.csv(preds.list[[n]], file=paste("cars.", month[n], "zotus.gaussian.201807.b2.csv", sep=""), quote=F) 
 
 }
 

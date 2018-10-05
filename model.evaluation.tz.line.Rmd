@@ -1,0 +1,588 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+There are several workflows and notes in here. The primary outcome is the development of a process for reading in models from .RDS files
+
+pipelining the predictions for both gaussian and poisson function models
+
+transforming the predictions to matricies and then presenting them as rasters using faceted ggplots
+
+Things to consider: is the data alrready in long format and therefore it is not needed to convert to matrix
+error check the preparation of the cars monthly files. In this workflow the monthly data files are imported out of calendar sync (m1, m10, m11, m12, m2 ...
+
+)
+
+```{r}
+
+library(gbm)
+library(maps)
+library(tidyquant)
+library(maptools)
+library(shapefiles)
+library(rgdal)
+library(ggplot2)
+library(rgeos)
+library(ncdf4)
+library(knitr)
+library(oce)
+```
+
+
+#### in a parallel workflow we are comparing the two sets of zOTU ids - we are extracting teh ASV species identifications for zOTUs using both green genes, SIlva 132  (which is terrible for marine Cyanobacteria, and probably also for other species as well). 
+
+Process the taxonomic assignment to help annotate the plots and aggregate the data for evaluation of predicted versus real
+
+```{r, results='asis'}
+
+#tax3<-read_csv("~/Dropbox/zOTUs/TZ/amd.b16s.nochim.dada2taxonly.csv")
+#tax2<-read_csv("/Volumes/Monkey/Dropbox/zOTUs/TZ/amd.b16s.nochim.dada2tax.csv")
+tax4<-read_csv("~/Dropbox/zOTUs/TZ/input/in16t02.seqtab.nochim.taxwAMDID_amdtax.csv")
+#tax5<-read_csv("/Volumes/Monkey/Dropbox/zOTUs/TZ/in16t02.seqtab.nochim.taxwAMDID.csv")
+in16.tax<-read_csv("~/Dropbox/zOTUs/TZ/input/in16.tax.silva132.cyano.csv")
+in16.tax.names<- unite(in16.tax, "plot.name", c("AMD_ID","Family", "Genus", "Species"), sep=" ", remove = F) # plot.name will be used to annotate each plot
+
+
+kable(in16.tax.names[,-5])
+```
+
+```{r, results='asis'}
+kable(sar11_top10[,-3])
+```
+
+
+
+Get the map outlines and fortify for ggplot
+```{r}
+
+GlobalCoastline3 <- readShapePoly("/Volumes/Monkey/Dropbox/gshhg-shp-2/GSHHS_shp/l/GSHHS_l_L1.shp") #potentially mediumn resolution
+
+shore3 <- fortify(GlobalCoastline3)
+
+saveRDS(shore3, "fortified_shoreline_ggplot_models.RDS")
+```
+
+
+
+Direct comparison with global gaussian models - convert all of the models to .rds
+```{r}
+
+#d0tz.preds<-matrix('numeric', nrow=nrow(d0tz), ncol=nrow(gmods.rds.names))
+#d0tz.preds<-read_csv("/Volumes/Monkey/Dropbox/zOTUs/TZ/d0tz.pres.csv") # predictions so far
+
+#d0tz<-d0cars.new %>% filter (lat > -55, lat< 0, lon > 90)
+d0tz<-read_csv("/Volumes/Monkey/Dropbox/zOTUs/TZ/d0tz.csv")
+
+d0tz$month.abb<-as.factor(d0tz$month.abb)
+d0tz$month.abb<-factor(d0tz$month.abb, levels=c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))
+
+
+action.run.these<-read_csv("~/Dropbox/zOTUs/TZ/input/run.list.csv")
+
+action.run.these.test<- action.run.these %>% 
+  dplyr::group_by(AMD_ID) %>% 
+  dplyr::mutate(sum = sum(temp.x))
+
+names.d0tz.preds.3<-vector('double', nrow(action.run.these))
+d0tz.preds.3<-matrix(-9999, nrow=nrow(d0tz), ncol=nrow(action.run.these))
+#for (i in seq_along(gmods.rds.names$value)){
+n=1
+#for (n in seq_along(action.run.these)){
+for (n in 51:100){
+setwd('/Volumes/LaCie/BRT_2018/tz_models_210618_DRV/')  
+mod<-readRDS(paste(action.run.these$ntmp[n]))
+names.d0tz.preds.3[n]<-mod[[28]][[5]]
+tmp<-predict.gbm(mod, d0tz, n.trees=mod[[28]][[15]], type="response")
+d0tz.preds.3[,n]<-tmp^2
+temp<-cbind(d0tz[,c(1:3, 13)], as.numeric(d0tz.preds.3[,n]))
+colnames(temp)[5]<-"abundance"
+
+#generate a plot to check the sanity of the prediction and double check that the model names match!!
+
+ggplot(temp, aes(x = lon, y = lat, fill = abundance))  + ylim(-55,0) + xlim(90,180) +
+    labs( x= "Longitude (˚E)", y="Latitude (˚N)", title = paste(action.run.these$plot.name[[n]], sep="")) +
+    geom_raster(interpolate = TRUE) +
+    scale_fill_gradientn(colours = c("white", rev(oceColorsTemperature(1026))), na.value = NA) +
+    geom_polygon(data = shore3, aes(x=long, y = lat, group = group), color = "NA", fill = "grey80") +
+    theme_bw() +
+    coord_fixed(1.3) +
+    facet_wrap(. ~ month.abb) + theme_tq() + theme(panel.spacing = unit(0.05, "cm")) +theme(legend.position="right")
+ggsave(filename =paste("/Volumes/Monkey/",names.d0tz.preds.3[[n]], ".g.local.pdf", sep=""))
+}
+```
+#
+
+```{r}
+
+export<-d0tz.preds.3[,21:50]
+colnames(export)<-names.d0tz.preds.3[21:50]
+
+export.table<-cbind(d0tz, export)
+write_csv(as.data.frame(export), "/Volumes/Monkey/Dropbox/zOTUs/TZ/tz.models.progress.21.50.csv")
+
+
+```
+
+read-in the prediction data, rbind the real and predicted after working out the intersect between column names =zOTUS. (and find a way to do this with tidyverse ==> this is now done - see below)
+
+```{r}
+
+#first50names<-unite(first.50.preds, "uniq_ID", c("lat", "lon", "month"), sep="_", remove = F)
+first50names.l154<-first50names %>%filter(lon==154, lat >-55, lat<-30, month>7, month<10)
+first50names.l154 <- first50names.l154[,c(1,2,4,15:62)]
+
+#get the real data into shape for a rbind
+
+action.run.these.test<-action.run.these.test %>%
+  distinct(AMD_ID, .keep_all=T)
+
+run.list<-as.tibble(action.run.these.test)
+
+real.data<-tax4[tax4$X1 %in% run.list$seqs.y,]
+in16.real.data<-real.data[,1:31]
+in16.real.data.ids <- in16.real.data %>% inner_join(run.list, by=c("X1"="seqs.y"))
+in16.real.data.ids.t<-t(in16.real.data.ids[,c(2:31)])
+colnames(in16.real.data.ids.t)<-in16.real.data.ids$X1
+colnames(in16.real.data.ids.t)<-run.list$AMD_ID[match(colnames(in16.real.data.ids.t), run.list$seqs.y)]
+in16.real.data.ids.t<-as.data.frame(in16.real.data.ids.t)
+in16.real.data.ids.t$uniq_ID<-row.names(in16.real.data.ids.t)
+
+test<-in16.real.data.ids.t[, colnames(first50names.l154)[colnames(first50names.l154)%in% colnames(in16.real.data.ids.t)]]
+test2<-first50names.l154[, colnames(test)]
+
+
+my.data<-rbind(test,test2) # now rbind the data
+
+#play with the values options
+my.data.mod<-my.data
+#my.data.mod$AMD_B16Sv1_3_zOTU_673020<-my.data.mod$AMD_B16Sv1_3_zOTU_673020/2
+#my.data.mod[31:228,1]<-my.data.mod[31:228,1]/2
+
+```
+
+
+```{r, fig.width=14, fig.height=6}
+
+barplot(as.matrix(t(sweep(my.data.mod[,-1], 1, rowSums(my.data.mod[,-1]), "/"))), col=rev(mycol), border=NA, las=2, ylim=c(0,1.4), width=c(rep(10,30), rep(2,1018)))
+legend("top", run.list$plot.name[match(colnames(my.data)[-1],run.list$AMD_ID)], fill=rev(mycol), ncol=3, cex=1.2)
+
+```
+
+Work up with tidyverse long format and ggplot
+
+1. plot the predictions for visual inspection
+2. combine the real and predicted
+```{r}
+#library(ggpubr)
+
+first.50.preds<-read_csv("/Volumes/Monkey/Dropbox/zOTUs/TZ/output/tz.models.progress.1_50.csv")
+first.50.preds$month.abb<-as.factor(first.50.preds$month.abb)
+first.50.preds$month.abb<-factor(first.50.preds$month.abb, levels=c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "real data","Sep", "Oct", "Nov", "Dec"))
+
+first50preds.l154<-first.50.preds %>%
+  filter(lon==154, lat > -55, lat < -30) %>%#subset to the lat and lon range we want
+  gather(zOTU, value,  c(14:61)) # convert to long format
+#first50preds.l154
+
+#gtest$value<-sqrt(gtest$value)
+
+#plot the monthly predicted communities 
+  p3<-ggbarplot(gtest, x= "lat", y = "value",  color = NA,  fill = "zOTU", palette=mycol320,  size = 0.6, alpha = 1,legend = "right", orientation = "vertical")+ #position = position_dodge(1)
+    font("xlab", size = 12, color = "blue")+ 
+    facet_wrap(. ~ month, drop=T, scales="free", nrow  =4)+ #scales="free"
+   #facet_grid(cluster ~ loc, drop=T, scales="free") +
+    font("ylab", size = 12, color = "#993333") +
+    font("xy.text", size = 3, color = "black") +
+    
+    theme_tq() +theme(panel.spacing = unit(0.05, "cm"), legend.text=element_text(size=2), 
+        legend.key.size = unit(.05, "cm")) + rotate_x_text(45) + scale_x_discrete()
+  
+  p3 + scale_x_discrete(breaks=seq(-50,0,10), labels=c(-50,-40,-30,-20,-10,0))
+  
+  ggsave(filename =paste("~/tzline.preds.170.pdf", sep=""), width = 10, height=10)
+
+```
+
+NOw add the lat-lon-month to the in16 real data
+```{r, fig.width=10}
+
+
+in16.coords<-read_csv("/Volumes/Monkey/Dropbox/zOTUs/TZ/in16.sites.cvs") # get the lat lons
+
+in16.real.data.ids.t<-as.data.frame(in16.real.data.ids.t) # get the real data subsetted for zOTUS in the predictions (or not)
+
+in16.real.data.ids.t$uniq_ID<-rownames(in16.real.data.ids.t)
+
+in16.real.data.ids.t<-in16.real.data.ids.t[,-307]
+in16.rdg<-in16.real.data.ids.t %>% 
+  gather(zOTU, value, -uniq_ID)   %>% # convert to long format and put the columns in order in the next few steps
+  mutate(month.abb="real data") %>% #add a month
+  inner_join(in16.coords, by=c("uniq_ID"="sample")) # add the data for lat lon
+
+combined<-rbind(first50preds.l154[, c(1:2,13:15)], in16.rdg[,2:6])
+
+
+
+# this next step allows for aggregation at any level by uniting the taxonomy at different levels
+combined<-combined %>% 
+  inner_join (run.list, by=c("zOTU" = "AMD_ID")) %>%
+  unite("order_genus", c("Order", "Genus", "Species"), remove=F)
+```
+
+```{r, fig.width=8}
+p3<-ggbarplot(combined, x= "lat", y = "value",  color = NA,  fill = "order_genus", palette=mycol,  size = 0.6, alpha = 1,legend = "right", orientation = "vertical")+ #position = position_dodge(1)
+    font("xlab", size = 12, color = "blue")+ 
+    facet_wrap(. ~ month.abb, drop=T, scales="free", nrow  =4)+ #scales="free"
+   #facet_grid(cluster ~ loc, drop=T, scales="free") +
+    font("ylab", size = 12, color = "#993333") +
+    font("xy.text", size = 3, color = "black") +
+    theme_tq() +theme(panel.spacing = unit(0.05, "cm"),  legend.text=element_text(size=4), 
+        legend.key.size = unit(.4, "cm"),) + rotate_x_text(45) + scale_x_discrete()
+  
+  p3 + scale_x_discrete(breaks=seq(-50,0,10), labels=c(-50,-40,-30,-20,-10,0)) #+ theme(legend.position="none")
+
+  
+   #ggsave(filename =paste("~/tzline.realvspreds.154e.pdf", sep=""), width = 10, height=6)
+```
+
+There might be a significant difference betweeen the real conditions and the 'climatology' for that time of the year
+
+get the satellite sst to compare - if possible plot the anomaly
+
+```{r}
+first.50.preds %>% filter(lat < -20, lat > -50, lon > 145, lon < 165) %>%
+ggplot( aes(x = lon, y = lat, fill = temp))  + ylim(-50,-20) + xlim(145,165) +
+    labs( x= "Longitude (˚E)", y="Latitude (˚N)", title = "CARS SST") +
+    geom_tile() +
+    scale_fill_gradientn(colours = oceColors9A(1026), na.value = NA) +
+    geom_polygon(data = shore3, aes(x=long, y = lat, group = group), color = "NA", fill = "grey80") +
+    theme_bw() +
+    coord_fixed(1.3) +
+    facet_wrap(. ~ month.abb) + theme_tq() + theme(panel.spacing = unit(0.05, "cm")) +theme(legend.position="right") + rotate_x_text(45)
+ggsave(filename =paste("~/CARS.temp.by.month.alt.pdf", sep=""))
+```
+
+```{r}
+clusters.sub<-read_csv("/Volumes/Monkey/Dropbox/zOTUs/TZ/output/tzpreds.latlonsub.csv")
+
+
+mycol13<-c("#d8006d",
+"#7a0036",
+"#f3b9a6",
+"#fbba59",
+"#543e00",
+"#b3d348",
+"#becd8f",
+"#2ca419",
+"#003414",
+"#008b62",
+"#01aae2",
+"#bd94ff",
+"#ffa1d2")
+clusters.sub<-clusters.sub %>%
+  mutate("month.abb" =month.abb[month])
+clusters.sub$month.abb<-as.factor(clusters.sub$month.abb)
+clusters.sub$month.abb<-factor(clusters.sub$month.abb, levels=c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "real data","Sep", "Oct", "Nov", "Dec"))
+
+
+clusters.sub$cl500<-as.factor(clusters.sub$cl500)
+
+clusters.sub %>%
+ ggplot( aes(x = lon, y = lat, fill = cl500, color=cl500), )  + ylim(-45,-22) + xlim(145,155) +
+   labs( x= "Longitude (˚E)", y="Latitude (˚N)", title = "Microbial provinces predicted from NRS + Voyage Data") +
+   geom_point() +
+   #scale_fill_discrete(palette = clusters.sub$cl500col, na.value = NA) +
+   geom_polygon(data = shore3, aes(x=long, y = lat, group = group), color = "NA", fill = "grey80") +
+   theme_bw() +
+   coord_fixed(1.3) +
+   facet_wrap(. ~ month.abb, nrow = 2) + theme_tq() + theme(panel.spacing = unit(0.05, "cm")) +theme(legend.position="right") + rotate_x_text(45) + scale_color_manual(values=mycol13) #clusters.sub$cl500col
+
+ggsave(filename =paste("~/tz.bioregions.v1.pdf", sep=""), width = 15) 
+```
+Deepa supplied mapped coordinates for the actual in16t02 track. We can use these to extract the corresponding predictions
+
+```{r}
+in16.track<-read_csv("/Volumes/Monkey/Dropbox/zOTUs/TZ/output/tz_mapped_coord.csv")
+
+
+
+in16.track<-in16.track %>% inner_join(first.50.preds, by=c("tzlon" = "lon"))
+
+
+
+rowSums(sweep(in16.track[,15:62], 1, rowSums(in16.track[,15:62]), "/"))
+in16.track.sweep<-cbind(in16.track[,1:14], sweep(in16.track[,15:62], 1, rowSums(in16.track[,15:62]), "/"))
+head(in16.track.sweep)
+in16.track<-in16.track.sweep[in16.track.sweep$tzlat==in16.track.sweep$lat,]
+in16.track<-in16.track[in16.track$tzlat==in16.track$lat,]
+
+in16.track.g<-in16.track %>% gather(zOTU, value,  c(15:62)) # convert to long format
+
+in16.track.g<-in16.track.g[!duplicated(in16.track.g[,c("lat", "month", "zOTU")]),]
+
+
+combined<-rbind(first50preds.l154[, c(1:2,13:15)], in16.rdg[,2:6])
+
+p3<-ggbarplot(in16.track.g, x= "lat", y = "value",  color = NA,  fill = "zOTU", palette=rev(mycol49),  size = 0.6, alpha = 1,legend = "right", orientation = "vertical")+ #position = position_dodge(1)
+    font("xlab", size = 12, color = "blue")+ 
+    facet_wrap(. ~ month.abb, drop=T, nrow  =4)+ #scales="free"
+   #facet_grid(cluster ~ loc, drop=T, scales="free") +
+    font("ylab", size = 12, color = "#993333") +
+    font("xy.text", size = 3, color = "black") +
+    theme_tq() +theme(panel.spacing = unit(0.05, "cm"),  legend.text=element_text(size=4), 
+        legend.key.size = unit(.4, "cm"),) + rotate_x_text(45) + scale_x_discrete()
+  
+  p3 + scale_x_discrete(breaks=seq(-50,0,10), labels=c(-50,-40,-30,-20,-10,0)) #+ theme(legend.position="none")
+
+?sweep
+```
+
+
+
+work-up for model prediction loop below this line
+
+```{r}
+mycol320<-c("#ee0679", "#79003a", "#9d004d", "#f6b5c5", "#ff307c", "#ff5788", "#3a0014", "#d6c1c4", "#ff7c99",
+ "#ffa9b7", "#78002d", "#ee0960", "#c2004c", "#920036", "#5a001c", "#b8003f", "#ff576f", "#c0003b",
+ "#6c001d", "#fcb4b4", "#ff868a", "#940028", "#a20025", "#ff948f", "#fc3d4d", "#380400", "#540008",
+ "#b80023", "#ffaca3", "#e4bdb7", "#e32e32", "#250900", "#ff6554", "#84000c", "#310d00", "#ff9179",
+ "#540f00", "#fd5739", "#ffa58e", "#a20c00", "#b01900", "#861500", "#ff8058", "#621800", "#ff6334",
+ "#e74f21", "#481600", "#fcb69d", "#ffa17c", "#692600", "#8c3300", "#9a3900", "#e15f06", "#cc5600",
+ "#ff8834", "#efbb9b", "#984800", "#ffa057", "#a55400", "#331a00", "#ffb375", "#ff9b3a", "#7e4300",
+ "#bb6a00", "#ff9a20", "#502d00", "#d48200", "#ffa730", "#ffb763", "#3e2600", "#7e5200", "#b37c00",
+ "#f8bb50", "#5f4200", "#e4c18c", "#f5b309", "#8a6700", "#d09d00", "#eeb903", "#e4c27c", "#a68100",
+ "#eec043", "#b38e00", "#e4c368", "#c4a000", "#292000", "#e0c645", "#cfc6ad", "#c5af00", "#6d6100",
+ "#766b00", "#352f00", "#d5c77d", "#998e00", "#5c5600", "#d6c92d", "#c2b700", "#454400", "#969900",
+ "#cdca68", "#cbc898", "#a7ae00", "#687000", "#525900", "#bdd129", "#7a7a79", "#bcd13d", "#6d8200",
+ "#83a000", "#a7c918", "#bad060", "#b8cf7d", "#334a00", "#2a3e00", "#4e7300", "#91ca25", "#a2d64c",
+ "#6dad00", "#5a9500", "#162100", "#386700", "#a7d473", "#abd286", "#418600", "#b7cda2", "#8fda56",
+ "#6dc32d", "#bccab1", "#164900", "#7fdc54", "#299700", "#4fbd33", "#0d2e00", "#0c6300", "#2da921",
+ "#9cd493", "#005111", "#00a22c", "#61df66", "#018b28", "#003c0c", "#004610", "#006c27", "#9fd3a3",
+ "#01b64a", "#86d893", "#00c95a", "#30df6c", "#009d49", "#a5d1ad", "#2fe27c", "#00934c", "#00401e",
+ "#41e08a", "#01985c", "#00b471", "#69dba0", "#017f50", "#002917", "#01df9d", "#76d9ad", "#007854",
+ "#00cf94", "#00583e", "#00422e", "#01936d", "#00140d", "#00634f", "#00ba98", "#01a084", "#bbc9c5",
+ "#018271", "#7ed6c4", "#37ddc5", "#001e1a", "#00352f", "#00baaa", "#005550", "#a3ceca", "#006a66",
+ "#6bd7d3", "#00aeae", "#008182", "#69d6db", "#1fdaea", "#00373c", "#00848f", "#01a2b2", "#005f69",
+ "#01c8dc", "#85d2df", "#01bedc", "#b9c9cf", "#01c5ed", "#003e4e", "#005368", "#019bc0", "#4acbff",
+ "#03a8e1", "#016489", "#051118", "#004663", "#70c8ff", "#0ab7ff", "#a6caea", "#001e30", "#0286c3",
+ "#4fb0ff", "#75baff", "#015b91", "#0174b9", "#003255", "#028deb", "#51a4ff", "#399eff", "#004274",
+ "#9cbfff", "#0171c7", "#001631", "#004d91", "#87abff", "#016ad1", "#0a0e20", "#6c94ff", "#0169df",
+ "#5086ff", "#c2c4df", "#002c6a", "#0046a7", "#005dde", "#003890", "#c2c1f7", "#c4c2ea", "#014ece",
+ "#003699", "#00246f", "#0445c7", "#003bb5", "#000e40", "#baafff", "#a59aff", "#100a29", "#002999",
+ "#988bff", "#0e0831", "#1826a4", "#040440", "#000d58", "#8066f0", "#9777ff", "#b494ff", "#00057a",
+ "#481d9f", "#8754db", "#190234", "#9e61eb", "#d7bbf2", "#662db1", "#2d0064", "#7e3fc5", "#be7dff",
+ "#d4a4ff", "#250040", "#3b0062", "#4d007b", "#d994ff", "#c568f1", "#a94cd3", "#de8cff", "#6c0094",
+ "#eeb0ff", "#280031", "#a133b9", "#8c14a2", "#640072", "#d960e5", "#f986ff", "#fd9dff", "#500055",
+ "#fb78fb", "#fbabf7", "#8f008c", "#d246c8", "#790073", "#dabed4", "#42003a", "#ef58d6", "#cc30b3",
+ "#ff6edd", "#f3b2df", "#feade5", "#ff94e0", "#74005e", "#c20b9d", "#940076", "#e5bad5", "#e83eb9",
+ "#ff77cf", "#b90086", "#ff5bc3", "#dc1d9e", "#600042", "#ff72c1", "#ff48b3", "#a1006a", "#390022",
+ "#ff87c1", "#dd008b", "#83004e", "#bc006e", "#ff6aac", "#ff469f", "#54002c", "#ff5ea1", "#240311",
+ "#940050", "#1c0910", "#ff96ba", "#ffa2bf", "#c10065")
+```
+
+
+
+```{r}
+mycol<-c("#ff85ab", "#e4bcc2", "#260308", "#ba0040", "#ff6774", "#6b0018", "#ff826e", "#370e00", "#a33000",
+ "#ffb088", "#512000", "#ff822d", "#bb6b00", "#ffb519", "#8c7c00", "#b5d122", "#5c7100", "#bdce83",
+ "#aad372", "#193000", "#8dda50", "#48a300", "#00b04b", "#005e2f", "#4cde9f", "#00705e", "#002423",
+ "#003752", "#0074b3", "#0194f9", "#a7c1ff", "#00519e", "#6c82ff", "#002467", "#120a28", "#011a80",
+ "#6c40c5", "#2c078b", "#ac63ed", "#260039", "#892eb5", "#dd6df4", "#8e0088", "#fa63e0", "#ffa2dc",
+ "#9f0070", "#ff51b6", "#a30060", "#ff4e97")
+
+
+```
+
+
+
+
+```{r}
+write_csv(as.data.frame(d0tz.preds), "~/Dropbox/zOTUs/TZ/d0tz.pres.csv")
+write_csv(as.data.frame(d0tz), "~/Dropbox/zOTUs/TZ/d0tz.csv")
+write_csv(as.data.frame(d0cars.new), "~/Dropbox/zOTUs/TZ/d0cars.new.csv")
+gmods.stats
+gmods.rds.names
+gmods.name
+gmods.contributions
+gmods.md
+gmods.cm
+
+
+gmods.names$value[i]
+load(paste(path, gmods.names$value[i], sep=""))
+
+
+corr.mean<-c(AMD_B16Sv1_3_zOTU_40611.mod[['cv.statistics']][['correlation.mean']], AMD_B16Sv1_3_zOTU_47475.mod[['cv.statistics']][['correlation.mean']], AMD_B16Sv1_3_zOTU_39005.mod[['cv.statistics']][['correlation.mean']])
+dev.mean<-c(AMD_B16Sv1_3_zOTU_40611.mod[['cv.statistics']][['deviance.mean']], AMD_B16Sv1_3_zOTU_47475.mod[['cv.statistics']][['deviance.mean']], AMD_B16Sv1_3_zOTU_39005.mod[['cv.statistics']][['deviance.mean']])
+contributions<-cbind(AMD_B16Sv1_3_zOTU_40611.mod[['contributions']][c("temp", "sal", "depth", "nox", "po4", "sil","n.p","strat", "DL"),2], AMD_B16Sv1_3_zOTU_47475.mod[['contributions']][c("temp", "sal", "depth", "nox", "po4", "sil","n.p","strat", "DL"),2], AMD_B16Sv1_3_zOTU_39005.mod[['contributions']][c("temp", "sal", "depth", "nox", "po4", "sil","n.p","strat", "DL"),2])
+
+rownames(contributions)<-("temp", "sal", "depth", "nox", "po4", "sil","n.p","strat", "DL")
+colnames(contributions)<-c("zOTU_40611", "zOTU_47475", "zOTU_39005")
+stats<-rbind(contributions, corr.mean, dev.mean)
+stats
+rownames(stats)<-c("temp", "sal", "depth", "nox", "po4", "sil","n.p","strat", "DL", "correlation.mean", "deviance.mean")
+
+kable(stats)
+```
+
+
+
+```{r}
+plot(mod5, what = "density", type="persp", col=rev(oceColors9A(21420)), lwd=0.01)
+
+dim(mod5$z)
+```
+
+Get mode statistics, contributions etc. 
+
+
+```{r}
+library(gplots)
+rownames(contributions)<-contributions$.id
+heatmap.2(as.matrix(contributions[,-1]), trace = "none", col=c("white", rev(oce.colorsViridis(99))), labRow = contributions$.id)
+?heatmap.2
+
+
+contributions.g<-gather(contributions, 'var',"value", -.id)
+contributions.g
+p <-ggplot(contributions.g,aes(.id,var,fill=value), orientation="vertical")+
+geom_tile(color= "white",size=0.1, ) +
+scale_fill_viridis_c(direction = -1, name="contributions") 
+p + theme_tq() + theme(axis.text.x=element_text(angle=45,hjust=1)) 
+
+p
+```
+
+```{r}
+models.g.list<-mget(ls(pattern="my.mod.mm_b16s_mm_b16s_.......p"))
+contributions<-lapply(models.g.list, function(x) x[['contributions']])
+#library(plyr)
+df<-ldply(contributions)
+contributions<-spread(df, var,rel.inf )
+
+cv.stats<-lapply(models.g.list, function(x) x[['cv.statistics']][['correlation.mean']])
+cv.df<-ldply(cv.stats)
+cv.stats.dm<-lapply(models.g.list, function(x) x[['cv.statistics']][['deviance.mean']])
+cv.df.dm<-ldply(cv.stats.dm)
+
+colnames(cv.df)<-c("mod","corr.mean", "mod", "dev.mean")
+write_csv(cv.df, 'cv.mean.csv')
+contributions<-read_csv("~/Dropbox/zOTUs/TZ/gauss.contributions.csv")
+
+
+```
+
+
+```{r}
+load("/Volumes/LaCie/BRT_2018/tz_models_210618_DRV/AMD_B16Sv1_3_zOTU_174826.gaussian.RData")
+saveRDS(my.mod, "/Volumes/LaCie/BRT_2018/tz_models_210618_DRV/AMD_zOTU_174826.RDS")
+
+
+d0cars.new<-read_csv("/Volumes/Monkey/Dropbox/zOTUs/TZ/d0cars.new.csv")
+
+d0cars.new$month.abb<-as.factor(d0cars.new$month.abb)
+d0cars.new$month.abb<-factor(d0cars.new$month.abb, levels=c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))
+
+
+AMD_zOTU_174826<-readRDS("/Volumes/LaCie/BRT_2018/tz_models_210618_DRV/AMD_zOTU_174826.RDS")
+mod<-AMD_zOTU_174826
+
+AMD_zOTU_171212<-readRDS("/Volumes/LaCie/BRT_2018/tz_models_210618_DRV/AMD_zOTU_171272.g.RDS")
+
+
+
+AMD_zOTU_171314<-readRDS("/Volumes/LaCie/BRT_2018/tz_models_210618_DRV/AMD_zOTU_171314.g.RDS")
+                         
+                         mod<-AMD_zOTU_171314
+tmp<-predict.gbm(mod, d0cars.new, n.trees=mod[[28]][[15]], type="response")
+tmp<-tmp^2
+temp<-cbind(d0cars.new[,c(1:3, 13)], as.numeric(tmp))
+colnames(temp)[5]<-"abundance"
+
+
+ggplot(temp, aes(x = lon, y = lat, fill = abundance))  + ylim(-55,0) + xlim(90,180) +
+    labs( x= "Longitude (˚E)", y="Latitude (˚N)", title = paste(mod[[28]][[5]], sep="")) +
+    geom_raster(interpolate = TRUE) +
+    scale_fill_gradientn(colours = c("white", rev(oceColorsTemperature(1026))), na.value = NA) +
+    geom_polygon(data = shore3, aes(x=long, y = lat, group = group), color = "NA", fill = "grey80") +
+    theme_bw() +
+    coord_fixed(1.3) +
+    facet_wrap(. ~ month.abb) + theme_tq() + theme(panel.spacing = unit(0.05, "cm")) +theme(legend.position="right")
+ggsave(filename =paste("/Volumes/Monkey/",mod[[28]][[5]], ".g.local.pdf", sep=""))
+
+ggplot(temp, aes(x = lon, y = lat, fill = abundance))  + ylim(-65,15) + 
+    labs( x= "Longitude (˚E)", y="Latitude (˚N)", title = paste(mod[[28]][[5]], sep="")) +
+    geom_raster(interpolate = TRUE) +
+    scale_fill_gradientn(colours = c("white", rev(oceColorsTemperature(1026))), na.value = NA) +
+    geom_polygon(data = shore3, aes(x=long, y = lat, group = group), color = "NA", fill = "grey80") +
+    theme_bw() +
+    coord_fixed(1.3) +
+    facet_wrap(. ~ month.abb) + theme_tq() + theme(panel.spacing = unit(0.05, "cm"),) +theme(legend.position="right")
+ggsave(filename =paste("/Volumes/Monkey/",mod[[28]][[5]], ".g.global.pdf", sep=""))
+
+
+```
+
+Import deepa's clusters and plot
+
+```{r}
+clusters.sub<-read_csv("~/Dropbox/zOTUs/TZ/output/tzpreds.latlonsub.csv")
+
+
+mycol13<-c("#d8006d",
+"#7a0036",
+"#f3b9a6",
+"#fbba59",
+"#543e00",
+"#b3d348",
+"#becd8f",
+"#2ca419",
+"#003414",
+"#008b62",
+"#01aae2",
+"#bd94ff",
+"#ffa1d2")
+
+mycol14<-c("#00242e",
+"#f1b7c1",
+"#aecfa9",
+"#007b77",
+"#4d4500",
+"#004488",
+"#9ad67d",
+"#53dda6",
+"#318800",
+"#8c008d",
+"#ff594d",
+"#ff48a0",
+"#f4a000")
+
+in16.points<-read_csv("~/Dropbox/zOTUs/TZ/output/tz.real.md.csv")
+
+clusters.sub$cl500<-as.factor(clusters.sub$cl500)
+
+p<-ggplot(data=clusters.sub, aes(x = lon, y = lat, fill = cl500, color="NA"), )  + ylim(-45,-5) + xlim(145,155) +
+    labs( x= "Longitude (˚E)", y="Latitude (˚N)", title = "Dynamic microbial provinces predicted from NRS + Voyage Data") +
+    geom_tile() +
+    #scale_fill_discrete(palette = clusters.sub$cl500col, na.value = NA) +
+    geom_polygon(data = shore3, aes(x=long, y = lat, group = group), color = "NA", fill = "grey80") +
+    theme_bw() +
+    coord_fixed(1) +
+    facet_wrap(. ~ month, nrow = 2) + theme_tq() + theme(panel.spacing = unit(0.05, "cm"),legend.text=element_text(size=18), 
+        legend.key.size = unit(.5, "cm")) +theme(legend.position="right") + rotate_x_text(45) + scale_fill_manual(values=mycol14) + guides(colour = guide_legend(override.aes = list(size=10)))#clusters.sub$cl500col
+
+p <- p+ geom_point(data=in16.points, aes(x=tz.real.lon, y=tz.real.lat), size=0.5, color="black", fill="NA") 
+
+p
+
+ggsave(filename =paste("~/tz.bioregions.v5.pdf", sep=""), width = 14) 
+
+edit(theme_tq)
+```
+
+```{r}
+write.table(in16.points)
+in16.points$tz.real.lat[14]<--38.926
+```
+

@@ -1,0 +1,377 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+#### Authors: Martin Ostrowski, Deepa Varkey and Mark Brown
+#### Date: 20190418
+#### email: martin.ostrowski@uts.edu.au
+
+This workbook details the construction of a normalised zOTU table for input into model building.
+
+The contextual data and derived columns are filtered and arranged (although some rows with NA still exist and should be pre-filtered)
+
+unique names required. They should correspond to am16s namesd
+
+To Do 
+check if Zm is available for the NRS
+setup the directories
+ensure the input files are present and correctly formatted
+present the numbers included in the model-building and the hold-out for independent validation
+
+```{r}
+
+library(tidyverse)
+zotus.named<-read_csv('~/uniq.min101.ID.csv')
+
+```
+
+
+The wide table imported was prepared by DEEPA, most of the zotus are name referenced am16s_zotu_XXXXXX
+
+some new ones are unnamed, they are given a name reference am16s_zotub_XXXXXX
+```{r}
+
+unique.zotus <- distinct(zotus.named, seq, .keep_all = T)
+unamed <- unique.zotus %>% filter(is.na(ID))
+
+
+newID <- as.data.frame(seq(1,83345, 1))
+colnames(newID) <-'newID'
+newID$prefix <-'am16s_zotub'
+newID <- newID %>% unite('name', c(prefix, newID), remove=T)
+
+unamed$ID <- newID$name
+unique.zotus.named <- bind_rows(unique.zotus, unamed)
+
+unique.zotus.named <- unique.zotus.named[,c(1,6)] %>% filter(!is.na(ID))
+
+zotus.named <- zotus.named[,c(1,3,5)] %>% left_join(unique.zotus.named, 'seq')
+
+```
+
+convert to wide format
+
+```{r}
+zotus.spread <-zotus.named[,-1] %>% 
+ group_by_at(vars(-count)) %>%  # group by everything other than the value column. 
+ mutate(row_id=1:n()) %>% ungroup() %>%  # build group index
+ spread(key=ID, value=count, fill=0) %>%    # spread
+ select(-row_id)  # drop the index
+```
+
+Prepare for standard normalisation, not rarefaction
+
+```{r}
+
+sample_totals<-rowSums(zotus.spread[,-1])
+
+hist(sample_totals, 200)
+median(sample_totals)
+```
+
+Normalise by dividing abundance by total (rowSums) * the median number of seqs (20000), don't forget to round
+
+```{r}
+
+zotus.totals<-colSums(zotus.spread[,-1]) # get the zotu totals
+
+zotus.spread.mat <- zotus.spread[,-1] # prepare a df without the sample column
+
+zotus.spread.100 <- zotus.spread.mat[,colSums(zotus.spread.mat) >99] # subset for normalised total > 100/20000 
+
+zotus.norm <- zotus.spread.100/(sample_totals/20000) # add the sample column
+
+zotus.norm <- round(zotus.norm, 0) # round up decimals
+
+zotus.norm.round <- cbind(as.character(zotus.spread$sample), zotus.norm)
+                
+zotus.norm.round.1000 <- cbind(as.character(zotus.spread$sample),zotus.norm[,(colSums(zotus.norm)>1000)])
+
+write_csv(zotus.norm.round, "~/Dropbox/zotus.norm.wide.100.csv")
+write_csv(zotus.norm.round.1000, "~/Dropbox/zotus.norm.wide.1000.csv")
+
+
+total<- sum(zotus.norm.round[,-1])
+paste("the threshold of 1000 observations is equivalent to ", 1000/total, " of the data", sep ="")
+paste("the top 300 zOTUs is equivalent to ", sum(rev(sort(colSums(zotus.norm)))[1:300])/total, " of the data", sep ="")
+paste("the top 1000 zOTUs is equivalent to ", sum(rev(sort(colSums(zotus.norm)))[1:1000])/total, " of the data", sep ="")
+paste("the top 10000 zOTUs is equivalent to ", sum(rev(sort(colSums(zotus.norm)))[1:10000])/total, " of the data", sep ="")
+
+```
+```{r}
+
+```
+
+Convert to long format to left_join the gtdb taxonomy and any custom species assignment
+
+To do
+
+get top 300 and check taxonomic composition
+
+```{r}
+gtdb.tax<-read_csv("~/Dropbox/AMI/uniques/latest/bac.16s.zotus.site.code.gtdbtax.csv")
+
+gtdb.tax<-read_csv("~/Dropbox/AMI/uniques/latest/bac.seqs.100.gtdbboot.csv")
+ 
+#gtdb.tax<- gtdb.tax[,c(1, 6:12)]                     
+
+gtdb.tax <- gtdb.tax %>% distinct(rowname, .keep_all = T)
+
+```
+
+
+
+```{r, fig.width=8}
+top300<-as.data.frame(names(rev(sort(colSums(zotus.norm))))[1:300])
+                      
+colnames(top300)<-'ID'
+
+top300 <- top300 %>% left_join(unique.zotus.named, 'ID')
+
+
+
+top300 <-top300 %>%  left_join(gtdb.tax, c('seq' = 'rowname'))
+```
+
+Plot an overview of the taxonomic composition of the top 300 by abundance, all sample_types
+```{r, fig.width=5}
+pr2_treemap(top300)
+```
+
+
+```{r, fig.width=6}
+top1000<-as.data.frame(names(rev(sort(colSums(zotus.norm))))[1:1000])
+                      
+colnames(top1000)<-'ID'
+
+top1000 <- top1000 %>% left_join(unique.zotus.named, 'ID')
+
+top1000 <-top1000 %>%  left_join(gtdb.tax, c('seq' = 'rowname'))
+```
+
+
+Plot an overview of the taxonomic composition of the top 1000 by abundance, all sample_types
+
+```{r, fig.width=5}
+pr2_treemap(top1000)
+```
+***
+
+####prepare the metadata for the top 10000
+
+* lat
+* lon
+* day, month, year
+
+
+* depth
+* temp,
+* salinity,
+* silicate
+* N
+* P
+* daylength 
+* bottomdepth (a proxy for coastal)
+* n.p 
+* nstar => also need to calculate this for CARS
+
+* strat checked and filled with previously calculated values
+**zm => mark to follow up**
+
+Fe
+nrs (as a factor)
+
+
+1. prepare daylength, n.p, nstar and *strat* values
+
+  daylength(lat, doy)
+  doy	
+  Interger, day of the year (1..365) for leap years; or an object of class Date; or a character that can be coerced into a date, using 'yyyy-mm-dd' format, e.g. '1982-11-23'
+  
+  stratification = temperature at depth x - temperature at surface. Surface is defined as < 10 m depth 
+  
+  
+####Remove all rows where temp is NA?
+
+```{r}
+install.packages('geosphere')
+library(geosphere)
+
+contextual<-read_csv("~/Dropbox/AMI/uniques/latest/contextual.csv")
+
+colnames(contextual) <- gsub(" ", "_", colnames(contextual), fixed = TRUE)
+colnames(contextual) <- gsub("[", "", colnames(contextual), fixed = TRUE)
+colnames(contextual) <- gsub("]", "", colnames(contextual), fixed = TRUE)
+colnames(contextual) <- tolower(colnames(contextual))
+
+contextual <- contextual  %>% separate (sample_id, c("num", "code"), sep='/')
+
+contextual <- contextual %>% separate(date_sampled, c('year','month','day'), sep='-', remove=F)
+
+contextual$month.abb <- factor(month.abb[as.integer(contextual$month)], levels=c("Jan", "Feb","Mar", "Apr","May",  "Jun", "Jul","Aug","Sep","Oct","Nov", "Dec" ))
+```
+
+Calculate daylength from lat and date_sampled. Quickview the derived data columns
+
+```{r}
+contextual$daylength<-(daylength(contextual$latitude_decimal_degrees,as.Date(contextual$date_sampled))*60)
+
+contextual$n.p <-contextual$`nitrate_nitrite_μmol/l`/contextual$`phosphate_μmol/l`
+
+contextual$nstar <-contextual$n.p-16
+
+contextual$nstar <- ifelse(contextual$nstar > 0, contextual$nstar, contextual$nstar==0) # convert nstar to +ve values only
+
+#pel.pub$`Longitude (decimal degrees)` <- ifelse(pel.pub$`Longitude (decimal degrees)` > 0, pel.pub$`Longitude (decimal degrees)`, (pel.pub$`Longitude (decimal degrees)`+360))
+
+#ggplot(contextual) + geom_point(aes(x=date_sampled, y=daylength, color=factor(round(latitude_decimal_degrees, 0)))) 
+ggplot(contextual %>% filter (depth_m < 10)) + 
+  geom_point(aes(y=factor(round(latitude_decimal_degrees, 0)), x=n.p)) + 
+  geom_point(aes(y=factor(round(latitude_decimal_degrees, 0)),x=nstar, colour="black", size=nstar))+ 
+  facet_grid(. ~ month)+ theme_mo() + 
+  geom_point(aes(x=daylength/100,y=factor(round(latitude_decimal_degrees, 0)), color=factor(nrs_location_code_voyage_code))) # geom_point(data=contextual.models.nona,aes(x=(`temperature_ctd_its-90,_deg_c`-surf.temp),y=factor(round(latitude_decimal_degrees, 0)), colour="green"))
+
+
+```
+
+Pre-fill surf.temp in order to calculate strat - or obtain Zm for the NRS
+
+```{r}
+contextual.strat.surf<- contextual %>% filter(depth_m < 20)
+
+temp<- contextual.strat.surf %>% group_by(date_sampled, latitude_decimal_degrees) %>% summarise(surf.temp = mean(`temperature_ctd_its-90,_deg_c`))
+
+contextual <- contextual %>% left_join(temp, c('date_sampled', 'latitude_decimal_degrees'))
+
+contextual.temp<- contextual %>% filter (!is.na(`temperature_ctd_its-90,_deg_c`))
+
+table(is.na(contextual.temp$`temperature_ctd_its-90,_deg_c`))
+
+write_csv(contextual, "~/contextual.modelling.csv")
+
+na_count c
+
+data.frame(na_count)
+
+contextual.models <- contextual.temp[,na_count < 600]
+
+contextual.models.nona <- contextual.temp[,na_count <600]
+
+colnames(contextual.models.nona)
+
+contextual.models.nona <- contextual.models.nona[, c(2:8, 11,12, 15, 17,19, 20, 21,22,23, 24, 26, 27, 28, 30:34)]
+```
+
+Add missing strate values from previously calculated
+
+```{r}
+
+library(DT)
+write_csv(contextual.models.nona, "~/contextual.modelling.csv")
+
+contextual.models.nona <-read_tsv("~/Dropbox/contextual.modelling.tsv")
+
+contextual.data.summary<-as.data.frame(sapply(contextual.models.nona, function(y) sum(length(which(is.na(y))))))
+colnames(contextual.data.summary)<-'is.na'
+
+datatable(contextual.data.summary)
+```
+#### statistics on NA
+
+The contextual data summary shows that out of 2770 rows there are 
+* 245 NA for P
+* 253 NA for N
+* 265 NA for silicate
+...
+
+These samples can be removed but used for independent validation
+
+export the datatable to html for record
+
+Select the core data and rename the columns
+
+m1. bottom_depth, temp, daylength, strat, sal, silicate, N, P, n.p, nstar
+m1.5 bottom_depth, temp, daylength, strat, sal, silicate, N, P, n.p, nstar, O2
+m2. bottom_depth, temp, daylength, strat, n.p, silicate
+m3. bottom_depth, temp, daylength, strat, n.p
+m4. bottom_depth, temp, daylength, strat, nstar
+m5. bottom_depth, temp, daylength, strat
+
+
+```{r}
+
+options(DT.options = list(pageLength = 100))
+
+# style V6 based on values of V6
+datatable(contextual.models.nona) %>% formatStyle(
+  c('N','P','n.p'),
+  backgroundColor = styleEqual(c(0, NA), c('gray', 'yellow'))
+)
+
+
+m1 <-c("bottom_depth", "temp", "daylength", "strat", "sal", "silicate", "N", "P", "n.p", "nstar")
+m1.5 <-c("bottom_depth", "temp", "daylength", "strat", "sal", "silicate", "N", "P", "n.p", "nstar", "O2")
+m2 <-c("bottom_depth", "temp", "daylength", "strat", "n.p", "silicate")
+m3 <-c("bottom_depth", "temp", "daylength", "strat", "n.p")
+m4 <-c("bottom_depth", "temp", "daylength", "strat", "nstar")
+m5 <-c("bottom_depth", "temp", "daylength", "strat")
+```
+***
+
+To Do:
+define the holdoutsamples for time series validation 
+
+```{r}
+ami_treemap <- function(ami) {
+    
+    # Define the levels
+    level1 = "tax.Family"
+    level2 = "tax.Species"
+    # Group
+    ami_class <- ami %>% group_by_(level1, level2) %>% summarise(sequence_number = n())
+    
+    # Do a simple treemap
+    treemap::treemap(ami_class, index = c(level1, level2), vSize = "sequence_number", 
+        title = "", asp = 2, lowerbound.cex.labels = 0.2, fontsize.labels = 12, 
+        palette = 'Blues', format.legend = list(scientific = FALSE, big.mark = " "))
+}
+```
+
+
+
+***
+
+```{r}
+theme_mo<-function (base_size = 11, base_family = "") 
+{
+    blue <- "#2c3e50"
+    green <- "#18BC9C"
+    white <- "#FFFFFF"
+    grey <- "grey80"
+    theme_grey(base_size = base_size, base_family = base_family) %+replace% 
+        theme(line = element_line(colour = blue, size = 0.5, 
+            linetype = 1, lineend = "butt"), rect = element_rect(fill = white, 
+            colour = blue, size = 0.5, linetype = 1), text = element_text(family = base_family, 
+            face = "plain", colour = blue, size = base_size, 
+            lineheight = 0.9, hjust = 0.5, vjust = 0.5, angle = 0, 
+            margin = margin(), debug = FALSE), axis.line = element_blank(), 
+            axis.text = element_text(size = rel(0.8)), axis.ticks = element_line(color = grey, 
+                size = rel(1/3)), axis.title = element_text(size = rel(1)), 
+            panel.background = element_rect(fill = white, color = NA), 
+            panel.border = element_rect(fill = NA, size = rel(1/2), 
+                color = blue), panel.grid.major = element_line(color = grey, 
+                size = rel(1/3)), panel.grid.minor = element_line(color = NA, 
+                size = rel(1/3)), panel.grid.minor.x = element_blank(), 
+            panel.spacing = unit(0.02, "cm"), legend.key = element_rect(fill = white, 
+                color = NA), legend.position = "bottom", strip.background = element_rect(fill = blue, 
+                color = blue), strip.text = element_text(color = white, 
+                size = rel(0.8)), plot.title = element_text(size = rel(1.2), 
+                hjust = 0, margin = margin(t = 0, r = 0, b = 4, 
+                  l = 0, unit = "pt")), plot.subtitle = element_text(size = rel(1.1), 
+                hjust = 0, margin = margin(t = 0, r = 0, b = 3, 
+                  l = 0, unit = "pt")), complete = TRUE)
+}
+```
+

@@ -1,0 +1,37 @@
+
+#### Authors: Martin Ostrowski, Deepa Varkey, Winona Wijaya, and Mark Brown
+#### Date: 20190418
+#### email: martin.ostrowski@uts.edu.au
+
+This notebook describes the generation of the boosted regression models for a collection of zOTUs using the package dismo and a parallel implementation of gbm.step using parSapply.
+
+Each model is generated and written as an .RDS file that can be loaded for predictions and evaluations at a later date.
+
+
+```{r}
+
+
+library(parallel)
+library(dismo)
+library(gbm)
+
+zotudata <- read_csv("euk_norm_spread_contextual_nona.csv")
+
+model.zotus<- function(i){
+
+my.mod<-gbm.step(data=data.frame(zotudata),gbm.x = c(9:17), gbm.y=17+i, family = "gaussian", tree.complexity = 10, learning.rate = 0.001, bag.fraction = 0.5)
+
+saveRDS(object=my.mod, file = paste("~/data/uniques/winona/rds_18/",my.mod[[28]][5][[1]], ".gaussian.RDS", sep=""))
+rm(my.mod)
+
+}
+
+clust <- makeCluster(8)
+
+clusterExport(clust, c("gbm.step", "zotudata", "saveRDS", "model.zotus"))
+
+res1<-parSapply(cl = clust, 1:2, function(i) model.zotus(i))
+
+stopCluster(clust)
+
+```

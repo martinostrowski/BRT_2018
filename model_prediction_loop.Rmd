@@ -1,0 +1,141 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#### Authors: Martin Ostrowski, Deepa Varkey and Mark Brown
+#### Date: 20190418
+#### email: martin.ostrowski@uts.edu.au
+
+This workbook describes a loop for generating spatial predictions for pre-computed models against the CARS weekly and monthly climatologies
+
+The workflow for producing the models is documented [here]
+The workflow for extracting and preparing the CARS data is documented (here) 
+
+```{r}
+library(gbm)
+library(dismo)
+library(tidyverse)
+
+setwd("~/data/RDS.1/")
+
+my.models<-list.files(pattern = "am16s.")
+nmods<-length(my.models)
+
+#cars.weekly<-read_csv('cars.weekly.v1.csv')
+preds.cars.weekly<-matrix(nrow=nrow(cars.weekly), ncol=nmods)
+my.mods<-vector('list', length=nmods)
+
+  eval.data.out<-vector('double', nmods)  
+  cv<-vector('double', nmods)
+  cvse<-vector('double', nmods)
+  ntrees<-vector('double', nmods)
+  contributions<-matrix(nrow=11, ncol=nmods)
+  rownames(contributions)<-c("temp","sal","silicate","depth","strat","N", "n.p", "P", "nstar", "daylength", "bottom_depth")
+
+for (p in seq_along(my.models)){
+setwd('~/data/RDS.1/')
+my.mod<-readRDS(my.models[p])
+preds.cars.weekly[,p]<-predict.gbm(my.mod, cars.weekly, n.trees=my.mod$gbm.call$best.trees, type="response")
+
+
+  eval.data.out<-unlist(my.models)
+  cv[p]<-my.mod$cv.statistics$correlation.mean
+  cvse[p]<-my.mod$cv.statistics$correlation.se
+  ntrees[p]<-my.mod$n.trees
+  contributions[,p]<-my.mod[[32]][c("temp","sal","silicate","depth","strat","N", "n.p", "P", "nstar", "daylength", "bottom_depth"),2]
+  tabledata<-(cbind(eval.data.out, round(cv, 2), round(cvse, 2), ntrees, round(t(contributions)),2))
+  write.table(tabledata[1:p,], sep='\t', quote=F)
+}
+  
+  eval.data.out<-unlist(my.models)
+  eval.data<-cbind(eval.data.out, round(cv, 2), round(cvse, 3), ntrees, round(t(contributions),1))
+ 
+  eval.data<-as.data.frame(eval.data)
+  
+  colnames(eval.data)[1:3]<-c("zOTU", "cv", "cv.se")
+  eval.data <- eval.data %>% separate(zOTU, c("zOTU",NA), sep=".gaussian.RDS", remove=T)
+  
+  
+  eval.data <- eval.data %>% left_join(top300, c('zOTU'='ID'))
+  write_csv(eval.data)
+  eval.data<-eval.data[, c(1:12, 14:27, 13)]
+  datatable(eval.data)
+  
+
+  datatable(cbind(eval.data.out, round(cv, 2), round(cvse, 3), ntrees, round(t(contributions),1)))
+```
+***
+
+some example plots used to visualise the spatial predictions
+
+clii<-read_csv('cladeiv.test.csv')
+shore<-readRDS('fortified_shoreline_ggplot_models.RDS')
+
+library(gganimate)
+world <- map_data("world")
+
+library(maps)
+```
+
+
+```{r, fig.width=7}
+
+g<-ggplot(clii, aes(x=lon, y=lat, fill=temp))  +theme_mo() + geom_raster(interpolate = TRUE)  +
+    scale_fill_gradientn(colours = oceColorsTemperature(1026), na.value = NA) +  geom_polygon(data = shore %>% filter (long > 110, lat < -5, lat > -60, long < 165) %>% fortify(), aes(x=long, y = lat, group = group), color = "NA", fill = "grey90", asp=1.1)  + transition_time(day)
+
+animate(g, height=1000, width=1000)
+
+anim_save(filename = "~/temp.weekly.gif")
+```
+
+```{r}
+g<-ggplot(clii, aes(x=lon, y=lat, fill=P))  +theme_mo() + geom_raster(interpolate = TRUE)  +
+    scale_fill_gradientn(colours = oceColorsTemperature(1026), na.value = NA) +  geom_polygon(data = shore %>% filter (long > 110, lat < -5, lat > -60, long < 165) %>% fortify(), aes(x=long, y = lat, group = group), color = "NA", fill = "grey90", asp=1.1)  + transition_time(day)
+
+animate(g, height=1000, width=1000)
+
+anim_save(filename = "~/P.weekly.gif")
+```
+***
+
+
+Below are some example plots to visualise time series predictions
+```{r}
+colnames(preds.rot)<-MRC
+colnames(preds.mai)<-MRC
+colnames(preds.phb)<-MRC
+
+p.data<-as.data.frame(cbind(phb, preds.phb[,]))
+m.data<-as.data.frame(cbind(mai, preds.mai[,]))
+r.data<-as.data.frame(cbind(rot, preds.rot[,]))
+
+m.data.tidy<- m.data %>% gather(key=zotu, value=abund, -(1:14))
+p.data.tidy<- p.data %>% gather(key=zotu, value=abund, -(1:16))
+r.data.tidy<- r.data %>% gather(key=zotu, value=abund, -(1:14))
+
+m.data.tidy <- m.data.tidy %>% left_join(top1000, c('zotu'='ID'))
+```
+
+```{r, fig.width=16, fig.height=2}
+ggplot(m.data.tidy %>% filter (strat < 2)) +geom_bar(aes(x=month, y=abund^2, fill=zotu), stat='identity', position='fill') + theme_mo() + facet_grid(. ~ year) + theme(legend.position = 'none') + scale_fill_manual(values = c(mycols200b,mycol89, mycols50b))
+```
+```{r, fig.width=16, fig.height=2}
+ggplot(m.data.tidy %>% filter (strat > 1)) +geom_bar(aes(x=month, y=abund^2, fill=zotu), stat='identity', position='fill') + theme_mo() + facet_grid(. ~ year) + theme(legend.position = 'none') + scale_fill_manual(values = c(mycols200b,mycol89, mycols50b))
+```
+
+
+```{r, fig.width=16, fig.height=2}
+m.data.tidy<- m.data.tidy %>% left_join(gtdb.tax, c('zotu'='rowname'))
+p.data.tidy<- p.data.tidy %>% left_join(gtdb.tax, c('zotu'='rowname'))
+
+
+ggplot(m.data.tidy %>% filter (strat < 2)) +geom_bar(aes(x=month, y=abund^2, group=tax.Genus.x, fill=zotu), stat='identity', position='fill') + theme_mo() + facet_grid(. ~ year) + scale_fill_manual(values = c(mycols200b,mycol89, mycols50b)) + theme(legend.position = 'none')
+  ```
+
+
+
+```{r, fig.width=2, fig.height=3}
+ggplot(m.data.tidy %>% filter (depth < 40)) +geom_bar(aes(x=year, y=abund^2, group=tax.Genus.x, fill=zotu), stat='identity', position='fill') + theme_mo()  + scale_fill_manual(values = c(mycols200b,mycol89, mycols50b)) + theme(legend.position = 'none') + facet_wrap(. ~ month, scale= 'free_x')
+```
+

@@ -1,0 +1,81 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#### Authors: Martin Ostrowski, Deepa Varkey and Mark Brown
+#### Date: 20190418
+#### email: martin.ostrowski@uts.edu.au
+
+This notebook extracts a representative data point for bottom_depth for every 1/2 degree of latitude and longitude
+
+The Gebco bathymetry file is 11Gb and difficult to read into memory. The solution is to slice the matrix on the fly using ncvar_get
+```{r}
+
+install.packages('gdata')
+library(gdata)
+library(ncdf4)
+library(tidyverse)
+library(oce)
+```
+
+```{r}
+bath<-nc_open("~/GEBCO_2019.nc",)
+
+lon <- ncvar_get(bath, 'lon')
+lat <- ncvar_get(bath, 'lat')
+
+mlon<-seq(1,86400,120)
+mlat<-seq(1,43200,120)
+86400/720
+43200/360
+
+mybath<-matrix(nrow=length(mlat), ncol=length(mlon))
+
+
+for (j in 1:length(mlat)){
+for (i in 1:length(mlon)){
+ 
+  
+  mybath[j,i]<-ncvar_get(bath, 'elevation', start=c(mlon[i],mlat[j]), count=c(1,1))
+}
+}
+
+write_csv(as.data.frame(mybath), '~/Dropbox/zOTUs/model.inputs/bathymetry.csv')
+image(t(mybath))
+
+mybath.v<-as.vector(mybath)
+
+
+lons<-seq(0,360,0.5)
+lats<-seq(-90,90, 0.5)
+
+colnames(mybath)<-lons[-1]
+rownames(mybath)<-lats[-1]
+
+mybath.df<- rownames_to_column(var='lat', as.data.frame(mybath))
+
+mybath.df
+
+mybath.tidy <- mybath.df %>% gather(key = lon, value='bottom_depth', -lat)
+
+d0cars.new<-read_csv("~/d0cars.new3.csv")
+d0cars.tidy<-read_csv("~/Dropbox/zOTUs/CARS/d0.cars.tidy2.csv")
+
+str(d0cars.new)
+str(mybath.tidy)
+mybath.tidy$lat<-as.numeric(mybath.tidy$lat)
+mybath.tidy$lon<-as.numeric(mybath.tidy$lon)
+
+d0cars.new <- d0cars.new %>% left_join(mybath.tidy, c("lat","lon"))
+
+imagep(lons[-1],lats[-1], t(mybath))
+
+ggplot(mybath.tidy %>%  filter(lon > 180), aes(x=lon, y=lat, fill=bottom_depth)) + geom_tile(na.rm = T)
+ggplot(d0cars.new %>%  filter(month==1, lon > 180), aes(x=lon, y=lat, fill=bottom_depth)) + geom_tile(na.rm = T)
+
+unique(d0cars.new$lon)
+
+unique(mybath.tidy$lon)
+
+```

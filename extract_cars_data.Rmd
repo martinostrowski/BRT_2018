@@ -1,0 +1,211 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#### Authors: Martin Ostrowski, Deepa Varkey and Mark Brown
+#### Date: 20190418
+#### email: martin.ostrowski@uts.edu.au
+
+This workbook details the extraction of CARS data from nedtcdf format to Long format
+
+CARS weekly and CARS global monthly data was downloaded from the [AODN portal](https://portal.aodn.org.au) as .nc files
+Bathymetry data was extracted from the GEBCO grid. 
+
+1. Processing CARS weekly
+
+```{r}
+library(ncdf4)
+library(tidyverse)
+library(oce)
+library(shapefiles)
+library(rgdal)
+```
+
+Extract the data from relevant variables 
+```{r}
+carsw<-nc_open('~/downloads/IMOS_aggregation_20190529T011708Z/IMOS_aggregation_20190529T011708Z.nc')
+
+
+clat<-ncvar_get(carsw, "LATITUDE")
+clon<-ncvar_get(carsw, "LONGITUDE")
+cday<-ncvar_get(carsw, "DAY_OF_YEAR")
+cdepth<-ncvar_get(carsw, "DEPTH")
+ctemp<-ncvar_get(carsw, "TEMP")
+csal<-ncvar_get(carsw, "PSAL")
+cdox2<-ncvar_get(carsw, "DOX2")
+cntr<-ncvar_get(carsw, "NTR2")
+csil<-ncvar_get(carsw, "SLC2")
+cpho<-ncvar_get(carsw, "PHOS")
+
+
+myvals<-c("lat", 'lon', 'day', 'depth','temp', 'sal', 'silicate','o2', 'N', 'P')
+
+````
+
+establish the dimensions of the data frames for each day
+  
+```{r}
+ndays<-length(cday)
+nlats<-length(clat)
+nlons<-length(clon)
+my.depth=0
+```
+Create a list of dfs and use a loop to extract each variable, converting from a matrix to a vector
+
+then join all of the dfs using bind_rows and derive n.p, nstar and join the bottom_depth from the 0.5 degree extracted bathymetry. 
+
+Add day length and see below for code to plot the data for error checking.
+
+### Check n.p, nstar for dodgy values
+
+set a cleiling of 100 for n.p and nstar
+
+```{r}
+cars.weekly<-vector('list', length=ndays)
+
+cars.weekly[[1]]<-data.frame(matrix(ncol=length(myvals), nrow=length(as.vector(ctemp[,,1,cday[1]]))))
+
+clats<-rep(clat[1], length(clon))
+for (i in 2:length(clat)){
+clats <- c(clats, rep(clat[i], length(clon)))
+}
+
+10695/length(clon)
+
+
+for (i in 1:52){
+  
+cars.weekly[[i]]<-data.frame(matrix(ncol=length(myvals), nrow=length(as.vector(ctemp[,,1,cday[1]]))))
+colnames(cars.weekly[[i]])<-myvals
+cars.weekly[[i]][,1]<-clats
+cars.weekly[[i]][,2]<-rep(clon, 93)
+cars.weekly[[i]][,3]<-rep(cday[i], 10695)
+cars.weekly[[i]][,4]<-rep(0, 10695)
+cars.weekly[[i]][,5]<-as.vector(ctemp[,,1,i])
+cars.weekly[[i]][,6]<-as.vector(csal[,,1,i])
+cars.weekly[[i]][,7]<-as.vector(cdox2[,,1,i])
+cars.weekly[[i]][,8]<-as.vector(csil[,,1,i])
+cars.weekly[[i]][,9]<-as.vector(cntr[,,1,i])
+cars.weekly[[i]][,10]<-as.vector(cpho[,,1,i])
+}
+
+cars.weekly<-bind_rows(cars.weekly)
+
+cars.weekly$n.p<-cars.weekly$N/cars.weekly$P
+
+cars.weekly$nstar<-ifelse(cars.weekly$N/cars.weekly$P >0, cars.weekly$N/cars.weekly$P, 0)
+
+mybath<-read_csv('~/Dropbox/zOTUs/model.inputs/bathymetry.csv')
+lons<-seq(0,360,0.5)
+lats<-seq(-90,90, 0.5)
+
+colnames(mybath)<-lons[-1]
+mybath$lat<-lats[-1]
+
+mybath.tidy <- mybath %>% gather(key = lon, value='bottom_depth', -lat)
+
+mybath.tidy$lat <- as.numeric(mybath.tidy$lat)
+mybath.tidy$lon <- as.numeric(mybath.tidy$lon)
+mybath.tidy$lon <- mybath.tidy$lon-180
+cars.weekly <- cars.weekly %>% left_join(mybath.tidy, c('lat','lon'))
+cars.weekly$strat<-0
+cars.weekly$daylength<-daylength(cars.weekly$lat, (cars.weekly$day))*60
+write_csv(cars.weekly, '~/Dropbox/zOTUs/model.inputs/cars.weekly.v1.csv')
+
+cars.weekly$n.p[cars.weekly$n.p > 100]<- 100
+cars.weekly$nstar[cars.weekly$nstar > 100]<- 100
+table(cars.weekly$n.p[cars.weekly$n.p == Inf])
+write_csv(cars.weekly, '~/Dropbox/zOTUs/model.inputs/cars.weekly.v1.csv')
+
+```
+****
+
+
+Repeat for CARS annual
+
+```{r}
+
+carsa<-nc_open('~/downloads/IMOS_aggregation_20190529T011611Z/IMOS_aggregation_20190529T011611Z.nc')
+
+
+alat<-ncvar_get(carsa, "LATITUDE")
+alon<-ncvar_get(carsa, "LONGITUDE")
+aday<-ncvar_get(carsa, "DAY_OF_YEAR")
+adepth<-ncvar_get(carsa, "DEPTH")
+atemp<-ncvar_get(carsa, "TEMP")
+asal<-ncvar_get(carsa, "PSAL")
+adox2<-ncvar_get(carsa, "DOX2")
+antr<-ncvar_get(carsa, "NTR2")
+asil<-ncvar_get(carsa, "SLC2")
+apho<-ncvar_get(carsa, "PHOS")
+cars.annual<-vector('list', length=length(aday))
+
+cars.annual[[1]]<-data.frame(matrix(ncol=length(myvals), nrow=length(as.vector(atemp[,,1,aday[1]]))))
+
+alats<-rep(alat[1], length(alon))
+for (i in 2:length(alat)){
+alats <- c(alats, rep(alat[i], length(alon)))
+}
+
+238651/length(alon)
+
+
+for (i in 1:12){
+  
+cars.annual[[i]]<-data.frame(matrix(ncol=length(myvals), nrow=238651))
+colnames(cars.annual[[i]])<-myvals
+cars.annual[[i]][,1]<-alats
+cars.annual[[i]][,2]<-rep(alon, 331)
+cars.annual[[i]][,3]<-rep(aday[i], 238651)
+cars.annual[[i]][,4]<-rep(0, 238651)
+cars.annual[[i]][,5]<-as.vector(atemp[,,1,i])
+cars.annual[[i]][,6]<-as.vector(asal[,,1,i])
+cars.annual[[i]][,7]<-as.vector(adox2[,,1,i])
+cars.annual[[i]][,8]<-as.vector(asil[,,1,i])
+cars.annual[[i]][,9]<-as.vector(antr[,,1,i])
+cars.annual[[i]][,10]<-as.vector(apho[,,1,i])
+}
+
+cars.annual[[1]][,1]
+head(cars.annual[[1]])
+cars.annual<-bind_rows(cars.annual)
+
+cars.annual$n.p<-cars.annual$N/cars.annual$P
+
+cars.annual$nstar<-ifelse(cars.annual$N/cars.annual$P >0, cars.annual$N/cars.annual$P, 0)
+mybath.tidy$lon <- mybath.tidy$lon+180
+cars.annual <- cars.annual %>% left_join(mybath.tidy, c('lat','lon'))
+cars.annual$strat<-0
+cars.annual$lon <-ifelse(cars.annual$lon < 180, cars.annual$lon, cars.annual$lon - 360)
+
+cars.annual$daylength<-daylength(cars.annual$lat, (cars.weekly$day))*60
+cars.annual$n.p[cars.annual$n.p > 100]<- 100
+cars.annual$nstar[cars.annual$nstar > 100]<- 100
+table(cars.annual$n.p[cars.annual$n.p == Inf])
+
+write_csv(cars.annual, '~/Dropbox/zOTUs/model.inputs/cars.annual.v1.csv')
+```
+
+***
+
+testing below
+
+
+```{r}
+
+            
+ggplot(cars.annual %>%  filter(day==32), aes(x=lon, y=lat, fill=temp)) + geom_tile(na.rm = T)
+```
+
+```{r}
+ggplot(test %>%  filter(day==1), aes(x=lon, y=lat, fill=N)) + geom_tile(na.rm = T)
+```
+
+```{r}
+ggplot(cars.annual %>%  filter(day==1), aes(x=lon, y=lat, fill=bottom_depth)) + geom_tile(na.rm = T)
+```
+```{r}
+ggplot(cars.annual %>%  filter(day==1, nstar < 20), aes(x=lon, y=lat, fill=nstar)) + geom_tile(na.rm = T)
+```
+

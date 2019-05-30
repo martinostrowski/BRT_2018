@@ -10,7 +10,7 @@ output: html_notebook
 This workbook describes a parallel function for generating spatial predictions for pre-computed models against the CARS weekly and monthly climatologies
 
 The workflow for producing the models is documented [here]
-The workflow for extracting and preparing the CARS data is documented (here) 
+The workflow for extracting and preparing the CARS data is documented [here](./02_extract_cars_data.Rmd) 
 
 ```{r}
 library(gbm)

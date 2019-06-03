@@ -28,13 +28,17 @@ clust <- makeCluster(10)
 
 
 predict.zotus <- function(k) {
-setwd("~/data/RDS.1/")
+setwd("~/data/RDS.3/")
 my.mod <- readRDS(my.models[k])
-preds.cars.weekly <- predict.gbm(my.mod, cars.weekly, n.trees=my.mod$gbm.call$best.trees, type="response")
+preds.cars.weekly <- tryCatch(predict.gbm(my.mod, cars.weekly, n.trees=my.mod$gbm.call$best.trees, type="response"), error=function(e) { print(e); return(NULL) })
+if (!is.null(preds.cars.weekly)) {
 mod.name<-my.mod[[28]][5][[1]]
 preds.cars.weekly <- as.data.frame(preds.cars.weekly)
 colnames(preds.cars.weekly) <- mod.name
 return(preds.cars.weekly)
+} else {
+    return(NULL)
+  }
 }
 
 clusterExport(clust, c("predict.gbm", "cars.weekly", "saveRDS", "predict.zotus", "my.models"))

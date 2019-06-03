@@ -1,0 +1,230 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+get mean PAR to replace day length. 
+Monthly averages of PAR were obtained from European Commission, Joint Research Centre (JRC) 
+http://gmis.jrc.ec.europa.eu/satellite/9km/
+
+Photosynthetically Active Radiation (PAR in Einstein.m^-2.day^-1 at 9km resolution): PAR is defined as the quantum energy flux from the sun in the spectral range 400 to 700 nm, usable in the process of photosynthesis by phytoplankton, benthic algae and seagrass.
+
+Create the CARS-compatible monthly and weekly PAR values on the same 0.5 degree grid 
+
+consider using the actual monthly - or interpolated - par from the Saewifs data for the zotu data
+
+obtain the mean and mean_var for each NRS
+
+```{r}
+library(ncdf4)
+library(oce)
+
+par<-nc_open('~/Downloads/GMIS_A_PAR_09_2003.nc')
+
+par
+```
+```{r}
+lats<-seq(90,-89.5,-0.5)
+lons<-seq(-180,179.5,0.5)
+
+lonsi<-seq(1,8640,12)
+latsi<-seq(1,4320,12)
+
+parlats<-rep(lats[1], 720)
+
+for (k in 2:length(lats)){
+  parlats<-c(parlats, rep(lats[k], 720))
+  }
+parlons<-rep(lons, 259200/length(lons))
+flag <- 1
+
+
+```
+
+
+```{r}
+
+library(gganimate)
+
+
+parm_list<- vector('list', length=12)
+for (j in 1:9){
+par.files<-list.files(path='~/Dropbox/par/', pattern=paste('GMIS_A_PAR_0',j, sep=""))
+
+parm_temp<-data.frame(matrix(nrow=259200, ncol=length(par.files)))
+
+  for (i in 1:length(par.files)){
+  setwd('~/Dropbox/par')
+par <- nc_open(paste0(par.files[i]))
+par.mat<-  ncvar_get(par, 'par')
+parm_temp[,i]<-as.vector(par.mat[lonsi,latsi])
+  }
+parm_list[[j]]<-rowMeans(parm_temp)
+}
+
+for (j in 10:12){
+par.files<-list.files(path='~/Dropbox/par/', pattern=paste('GMIS_A_PAR_',j, sep=""))
+
+parm_temp<-data.frame(matrix(nrow=259200, ncol=length(par.files)))
+
+  for (i in 1:length(par.files)){
+  setwd('~/Dropbox/par')
+par <- nc_open(paste0(par.files[i]))
+par.mat<-  ncvar_get(par, 'par')
+parm_temp[,i]<-as.vector(par.mat[lonsi,latsi])
+  }
+parm_list[[j]]<-rowMeans(parm_temp)
+}
+
+summary(do.call(cbind, parm_list), na.rm=T)
+
+#summary(parm_temp, na.rm=T)
+
+par_all <- as.data.frame(cbind(parlons,parlats,do.call(cbind, parm_list)))
+
+colnames(par_all) <- c("lons","lats","m1", 'm2', 'm3','m4','m5', 'm6','m7','m8', 'm9','m10','m11','m12')
+
+#par_all<-rbind(par_01, par_02)
+#colnames(par_all) <- c("lons","lats","par")
+
+#par_all.diff <- as.data.frame(cbind(parlons,parlats,pardiff))
+
+
+par.tidy<- par_all %>% gather(key=month, value= 'par', -c(lons, lats))
+par.tidy<- par.tidy %>% separate(month, c('m', 'month'), sep='m', remove=T)
+par.tidy$month<-as.numeric(par.tidy$month)
+doym<-c( 1,  32,  62,  93, 123, 154, 184, 215, 245, 276, 306, 337)
+
+par.tidy$day<-doym[par.tidy$month]
+write_csv(par.tidy, 'par.monthly.tidy.csv')
+saveRDS(par.tidy, file = 'par.tidy.RDS')
+```
+
+IntErpolate the weeKly PAR
+
+
+```{r}
+weeks<-seq(1,52,1)
+
+par.weeks<-matrix(nrow=nrow(par_all), ncol=52)
+  
+weeks4<-c("w4", "w8", "w12", "w16", "w20","w24", "w28", "w32", "w36", "w40", "w44", "w48", "w52")
+
+midweeks<-seq(4,52,4)
+for (i in 1:11){
+par.weeks[,midweeks[i]]<- rowMeans(par_all[,c(i+2,i+3)])
+par.weeks[,midweeks[i]-2]<- par_all[,i+2]
+}
+
+par.weeks[,midweeks[12]-2]<- par_all[,i+2]
+par.weeks[,midweeks[13]-2]<- par_all[,i+2]
+par.weeks[,48]<- rowMeans(par_all[,c(13,14)])
+par.weeks[,52]<- rowMeans(par_all[,c(3,14)])
+
+fill.weeks<-seq(1,51,2)
+for(i in 2:26){
+par.weeks[,fill.weeks[i]]<- rowMeans(par.weeks[,c(fill.weeks[i]+1,fill.weeks[i]-1)]) 
+}
+par.weeks[,1]<- rowMeans(par.weeks[,c(2,52)]) 
+
+weekly.par<-as.data.frame((cbind(par_all[,1:2], par.weeks)))
+
+par.weekly.tidy<- weekly.par %>% gather(key=week, value= 'par', -c(lons, lats))
+
+par.weekly.tidy$week<-as.numeric(par.weekly.tidy$week)
+
+doyw<-c(1, 8, 15, 22, 29, 36, 43, 50, 57, 64, 71, 78, 85, 93, 100, 107, 114, 121, 128, 135, 142, 149, 156, 163, 170, 177, 184, 191, 198, 205, 212, 219, 226, 233, 240, 247, 254, 261, 268, 276, 283, 290, 297, 304, 311, 318, 325, 332, 339, 346, 353, 360)
+par.weekly.tidy$day<-doyw[par.weekly.tidy$week]
+write_csv(par.weekly.tidy, 'par.weekly.tidy.csv')
+summary(par.weeks, na.rm=T)
+```
+
+
+```{r, fig.width=12}
+ggplot(par.tidy) +
+  geom_tile(aes(x = lons, y = lats, fill = par))+facet_wrap(. ~ month)+ scale_fill_gradientn(colours = oceColorsPAR(1200))+ theme_mo()
+```
+
+
+
+```{r}
+yearly<-ggplot(par.tidy  %>% filter (between(lons,100,180), between(lats,-50,-5)),aes(x = lons, y = lats, fill = par)) + geom_tile() + transition_time(day)+ scale_fill_gradientn(colours = oceColorsPAR(1200))+ theme_mo() + geom_poly(data=shore$, aes(x=long, y=lat, fill='lightgrey'))
+
+gganimate(yearly, ani.width= 2000, ani.height=2000, "test.gif")
+anim_save(filename = 'par.anim.par.gif')
+
+```
+
+```{r}
+ggplot(par.weekly.tidy  %>% filter (between(lons,100,180), between(lats,-50,-5)),aes(x = lons, y = lats, fill = par)) + geom_tile() + scale_fill_gradientn(colours = oceColorsPAR(1200))+ theme_mo() + labs(title = paste('week of year:','{closest_state}', sep='')) + transition_states(week, transition_length = 1, state_length = 1) + geom_text(aes(x=125, y=-30, )
+                                                                                                                                                                                                                                                                                                                                                     
+                                                                                                                                                                                                                                                                                                                                                     
+```
+```{r}
+
+
+yearly <-ggplot(par.weekly.tidy, aes(x = lons, y = lats, fill = par)) + 
+  geom_raster() + 
+  scale_fill_gradientn(colours = oceColorsPAR(1200))+ 
+  theme_mo() + 
+  coord_fixed(1.3) +
+  geom_polygon(data = shore, aes(x=long, y = lat, group = group), color = "NA", fill = "grey80") +
+   labs(title = paste('week of year:','{closest_state}', sep='')) + transition_states(week, transition_length = 1, state_length = 1)
+
+gganimate(yearly, ani.width= 2000, ani.height=2000, "test.gif")
+anim_save(filename = 'par.anim.par.gif')
+  
+  
+```
+
+
+```{r}
+
+
+ggplot(par.weekly.tidy %>%  filter(lons==152, lats== -33), aes(x = day, y = par)) + 
+  geom_point() + 
+  #scale_fill_gradientn(colours = oceColorsPAR(1200))+ 
+  theme_mo() + 
+  coord_fixed(1.3) 
+
+shore<-readRDS('fortified_shoreline_ggplot_models.RDS')
+library(tidyquant)
+library(maptools)
+library(shapefiles)
+library(rgdal)
+library(maps)
+world_map<-map_data("world")
+animate()
+```
+
+```{r}
+theme_mo<-function (base_size = 18, base_family = "") 
+{
+    blue <- "#2c3e50"
+    green <- "#18BC9C"
+    white <- "#FFFFFF"
+    grey <- "grey80"
+    theme_grey(base_size = base_size, base_family = base_family) %+replace% 
+        theme(line = element_line(colour = blue, size = 0.5, 
+            linetype = 1, lineend = "butt"), rect = element_rect(fill = white, 
+            colour = blue, size = 0.5, linetype = 1), text = element_text(family = base_family, 
+            face = "plain", colour = blue, size = base_size, 
+            lineheight = 0.9, hjust = 0.5, vjust = 0.5, angle = 0, 
+            margin = margin(), debug = FALSE), axis.line = element_blank(), 
+            axis.text = element_text(size = rel(0.8)), axis.ticks = element_line(color = grey, 
+                size = rel(1/3)), axis.title = element_text(size = rel(1)), 
+            panel.background = element_rect(fill = white, color = NA), 
+            panel.border = element_rect(fill = NA, size = rel(1/2), 
+                color = blue), panel.grid.major = element_line(color = NA, 
+                size = rel(1/3)), panel.grid.minor = element_line(color = NA, 
+                size = rel(1/3)), panel.grid.minor.x = element_blank(), 
+            panel.spacing = unit(0.01, "cm"), legend.key = element_rect(fill = white, 
+                color = NA), legend.position = "bottom", strip.background = element_rect(fill = blue, 
+                color = blue), strip.text = element_text(color = white, 
+                size = rel(1.0)), plot.title = element_text(size = rel(1.6), 
+                hjust = 0, margin = margin(t = 0, r = 0, b = 4, 
+                  l = 0, unit = "pt")), plot.subtitle = element_text(size = rel(1.1), 
+                hjust = 0, margin = margin(t = 0, r = 0, b = 3, 
+                  l = 0, unit = "pt")), complete = TRUE)
+}
+```
